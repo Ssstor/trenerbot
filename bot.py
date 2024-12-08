@@ -132,12 +132,13 @@ def send_post(message):
     bot.send_message(chat_id, "Пост успешно отправлен всем пользователям!")
     del user_states[chat_id]   
 
-    
 @bot.message_handler(func=lambda msg: msg.chat.id in user_states)
 def state_handler(message):
     chat_id = message.chat.id
     state = user_states[chat_id]
     session = Session()
+
+    bot.delete_message(chat_id, message.message_id)
 
     if state["step"] == "name":
         name = message.text
@@ -146,14 +147,15 @@ def state_handler(message):
         session.commit()
 
         schedule_user_reminder(user.id, chat_id, user.first_measurement_date)
-        bot.send_message(chat_id, f"Приятно познакомиться, {name}! Сейчас мы сделаем ваше первое измерение\nДробные значения вводить в формате: 60.4\nДавайте начнем с вашего веса (в кг).")
+        bot.send_message(chat_id, f"Приятно познакомиться, {name}! Давайте начнем с вашего веса (в кг).")
         state["step"] = "weight"
 
     elif state["step"] == "weight":
         try:
             weight = float(message.text)
             state["weight"] = weight
-            bot.send_message(chat_id, "Введите объем левой руки (в см).")
+            msg = bot.send_message(chat_id, "Введите объем левой руки (в см).")
+            state["prev_msg_id"] = msg.message_id
             state["step"] = "left_arm"
         except ValueError:
             bot.send_message(chat_id, "Пожалуйста, введите число.")
@@ -162,7 +164,8 @@ def state_handler(message):
         try:
             left_arm = float(message.text)
             state["left_arm"] = left_arm
-            bot.send_message(chat_id, "Введите объем правой руки (в см).")
+            msg = bot.send_message(chat_id, "Введите объем правой руки (в см).")
+            state["prev_msg_id"] = msg.message_id
             state["step"] = "right_arm"
         except ValueError:
             bot.send_message(chat_id, "Пожалуйста, введите число.")
@@ -171,7 +174,8 @@ def state_handler(message):
         try:
             right_arm = float(message.text)
             state["right_arm"] = right_arm
-            bot.send_message(chat_id, "Введите объем груди (в см).")
+            msg = bot.send_message(chat_id, "Введите объем груди (в см).")
+            state["prev_msg_id"] = msg.message_id
             state["step"] = "chest"
         except ValueError:
             bot.send_message(chat_id, "Пожалуйста, введите число.")
@@ -180,7 +184,8 @@ def state_handler(message):
         try:
             chest = float(message.text)
             state["chest"] = chest
-            bot.send_message(chat_id, "Введите объем талии (в см).")
+            msg = bot.send_message(chat_id, "Введите объем талии (в см).")
+            state["prev_msg_id"] = msg.message_id
             state["step"] = "waist"
         except ValueError:
             bot.send_message(chat_id, "Пожалуйста, введите число.")
@@ -189,7 +194,8 @@ def state_handler(message):
         try:
             waist = float(message.text)
             state["waist"] = waist
-            bot.send_message(chat_id, "Введите объем бедер (в см).")
+            msg = bot.send_message(chat_id, "Введите объем бедер (в см).")
+            state["prev_msg_id"] = msg.message_id
             state["step"] = "hips"
         except ValueError:
             bot.send_message(chat_id, "Пожалуйста, введите число.")
@@ -198,7 +204,8 @@ def state_handler(message):
         try:
             hips = float(message.text)
             state["hips"] = hips
-            bot.send_message(chat_id, "Введите объем левой ноги (в см).")
+            msg = bot.send_message(chat_id, "Введите объем левой ноги (в см).")
+            state["prev_msg_id"] = msg.message_id
             state["step"] = "left_leg"
         except ValueError:
             bot.send_message(chat_id, "Пожалуйста, введите число.")
@@ -207,7 +214,8 @@ def state_handler(message):
         try:
             left_leg = float(message.text)
             state["left_leg"] = left_leg
-            bot.send_message(chat_id, "Введите объем правой ноги (в см).")
+            msg = bot.send_message(chat_id, "Введите объем правой ноги (в см).")
+            state["prev_msg_id"] = msg.message_id
             state["step"] = "right_leg"
         except ValueError:
             bot.send_message(chat_id, "Пожалуйста, введите число.")
@@ -217,10 +225,15 @@ def state_handler(message):
             right_leg = float(message.text)
             state["right_leg"] = right_leg
             save_measurement(chat_id, state, message)
+
+            
+            if "prev_msg_id" in state:
+                bot.delete_message(chat_id, state["prev_msg_id"])
             bot.send_message(chat_id, "Спасибо! Ваши данные сохранены.")
             del user_states[chat_id]
         except ValueError:
             bot.send_message(chat_id, "Пожалуйста, введите число.")
+    
 
 def save_measurement(chat_id, data, message):
     session = Session()
@@ -260,8 +273,15 @@ def save_measurement(chat_id, data, message):
             summary += f"Бедра: {format_change(data['hips'], last_measurement.hips)}\n"
             summary += f"Ноги: {format_change(data['left_leg'], last_measurement.left_leg)} / {format_change(data['right_leg'], last_measurement.right_leg)}\n"
             summary += f"Вес: {data['weight']} кг ({data['weight'] - last_measurement.weight:+.1f} кг)"
+            
         else:
-            return
+            summary += f"Талия: {data['waist']} см\n"
+            summary += f"Грудь: {data['chest']} см\n"
+            summary += f"Руки: {data['left_arm']} см / {data['right_arm']} см\n"
+            summary += f"Бедра: {data['hips']} см\n"
+            summary += f"Ноги: {data['left_leg']} см / {data['right_leg']} см\n"
+            summary += f"Вес: {data['weight']} кг"
+
 
         bot.send_message(chat_id, summary)
 
