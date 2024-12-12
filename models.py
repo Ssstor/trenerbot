@@ -40,7 +40,21 @@ class Reminder(Base):
     time = Column(DateTime, nullable=False)
     user = relationship("User")
 
-    
+class UserState(Base):
+    __tablename__ = "user_states"
+    chat_id = Column(Integer, primary_key=True)
+    step = Column(String, nullable=False)
+    reminder_msg_id = Column(Integer)
+    weight = Column(Float)
+    left_arm = Column(Float)
+    right_arm = Column(Float)
+    chest = Column(Float)
+    waist = Column(Float)
+    hips = Column(Float)
+    left_leg = Column(Float)
+    right_leg = Column(Float)
+    meditation_time = Column(String)
+
 if __name__ == "__main__":
     Base.metadata.create_all(engine)
 
