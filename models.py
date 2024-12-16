@@ -4,7 +4,13 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 from api_token import DB_URL
 
-engine = create_engine(DB_URL)
+engine = create_engine(DB_URL,
+    pool_size=20,         # Размер пула (по умолчанию 5)
+    max_overflow=10,      # Дополнительные соединения (по умолчанию 10)
+    pool_timeout=30,      # Тайм-аут ожидания соединения в секундах (по умолчанию 30)
+    pool_recycle=3600     # Рециклинг соединений (по умолчанию None)
+)
+
 Base = declarative_base()
 
 class User(Base):
@@ -43,7 +49,7 @@ class Reminder(Base):
 class UserState(Base):
     __tablename__ = "user_states"
     chat_id = Column(Integer, primary_key=True)
-    step = Column(String, nullable=False)
+    step = Column(String, nullable=True)
     reminder_msg_id = Column(Integer)
     weight = Column(Float)
     left_arm = Column(Float)
@@ -54,7 +60,9 @@ class UserState(Base):
     left_leg = Column(Float)
     right_leg = Column(Float)
     meditation_time = Column(String)
+    meditation_video_message_id = Column(Integer)
 
 if __name__ == "__main__":
     Base.metadata.create_all(engine)
+
 
