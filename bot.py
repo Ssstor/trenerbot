@@ -2,7 +2,6 @@ import threading
 import queue
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from api_token import *
@@ -13,8 +12,6 @@ import atexit
 bot = telebot.TeleBot(API_TOKEN)
 Session = sessionmaker(bind=engine)
 
-TEST_MODE = False
-
 video_path = 'meditation_video.mp4'
 
 scheduler = BackgroundScheduler()
@@ -24,7 +21,6 @@ scheduler.start()
 message_queue = queue.Queue()
 
 def state_handler_worker():
-    """Фоновый поток для обработки сообщений."""
     while True:
         message = message_queue.get()
         if message is None:  # Завершающий сигнал
@@ -37,93 +33,72 @@ def state_handler_worker():
         finally:
             message_queue.task_done()
 
-# Запуск фонового потока
 worker_thread = threading.Thread(target=state_handler_worker, daemon=True)
 worker_thread.start()
 
 def enqueue_message(message):
-    """Добавляет сообщение в очередь для обработки."""
     message_queue.put(message)
 
 def send_reminder(chat_id):
     with Session() as session:
         user_state = session.query(UserState).filter_by(chat_id=chat_id).first()
+        
         if user_state:
             session.delete(user_state)
             session.commit()
 
-        msg = bot.send_message(chat_id, "Пора ввести новые измерения. Начнем с вашего веса (в кг).")
-        user_state = UserState(chat_id=chat_id, step="weight", reminder_msg_id=msg.message_id)
+        user_state = UserState(chat_id=chat_id, step="weight")
         session.add(user_state)
         session.commit()
 
-def schedule_user_reminder(user_id, chat_id, first_measurement_date):
+def send_group_reminder():
     with Session() as session:
-        weekday = first_measurement_date.weekday()
-
-        reminder = Reminder(
-            user_id=user_id,
-            day_of_week=weekday,
-            time=first_measurement_date.replace(hour=7, minute=0)
-        )
-        session.add(reminder)
-        session.commit()
-
-        if TEST_MODE:
-            scheduler.add_job(
-                send_reminder,
-                trigger=IntervalTrigger(minutes=5),
-                args=[chat_id],
-                id=str(reminder.id),
-                replace_existing=True
-            )
-        else:
-            scheduler.add_job(
-                send_reminder,
-                trigger=CronTrigger(day_of_week='mon', hour=7, minute=0),
-                args=[chat_id],
-                id=str(reminder.id),
-                replace_existing=True
-            )
+        users = session.query(User).all()
+        for user in users:
+            try:
+                bot.send_message(user.chat_id, "Пора ввести новые измерения! Начнем с вашего веса (в кг).")
+                user_state = session.query(UserState).filter_by(chat_id=user.chat_id).first()
+                if not user_state:
+                    user_state = UserState(chat_id=user.chat_id, step="weight")
+                    session.add(user_state)
+                else:
+                    user_state.step = "weight"
+                session.commit()
+            except Exception as e:
+                print(f"Ошибка отправки напоминания пользователю {user.chat_id}: {e}")
 
 def load_reminders():
     with Session() as session:
         reminders = session.query(Reminder).all()
         for reminder in reminders:
-            user = reminder.user
-            if TEST_MODE:
-                scheduler.add_job(
-                    send_reminder,
-                    trigger=IntervalTrigger(minutes=1),
-                    args=[user.chat_id],
-                    id=str(reminder.id),
-                    replace_existing=True
-                )
-            else:
-                scheduler.add_job(
-                    send_reminder,
-                    trigger=CronTrigger(day_of_week=reminder.day_of_week, hour=7, minute=0),
-                    args=[user.chat_id],
-                    id=str(reminder.id),
-                    replace_existing=True
-                )
+            meditation_time = datetime.strptime(reminder.meditation_time, "%H:%M")
+            chat_id = reminder.chat_id
+            
+            scheduler.add_job(
+                send_meditation_video,
+                trigger=CronTrigger(hour=meditation_time.hour, minute=meditation_time.minute),
+                args=[chat_id],
+                id=f"meditation_{chat_id}",
+                replace_existing=True
+            )
 
 def send_meditation_video(chat_id):
     with Session() as session:
-        user_state = session.query(UserState).filter_by(chat_id=chat_id).first()
+        # print(chat_id, type(chat_id))
+        meditation_reminder = session.query(Reminder).filter_by(chat_id=int(chat_id)).first()
 
         with open(video_path, 'rb') as video:
-            if user_state:
-                if user_state.meditation_video_message_id:
+            if meditation_reminder:
+                if meditation_reminder.meditation_video_message_id:
                     try:
-                        bot.send_message(chat_id, "Пора медитировать!", reply_to_message_id=user_state.meditation_video_message_id)
+                        bot.send_message(chat_id, "Пора медитировать!", reply_to_message_id=meditation_reminder.meditation_video_message_id)
                     except Exception:
                         video_message = bot.send_video(chat_id, video=video, caption="Ваше медитативное видео")
-                        user_state.meditation_video_message_id = video_message.message_id
+                        meditation_reminder.meditation_video_message_id = video_message.message_id
                         session.commit()
                 else:
                     video_message = bot.send_video(chat_id, video=video, caption="Ваше медитативное видео")
-                    user_state.meditation_video_message_id = video_message.message_id
+                    meditation_reminder.meditation_video_message_id = video_message.message_id
                     session.commit()
 
 @bot.message_handler(commands=['start'])
@@ -148,11 +123,9 @@ def post_handler(message):
         with Session() as session:
             user_state = session.query(UserState).filter_by(chat_id=chat_id).first()
             if user_state:
-                # Обновляем существующее состояние вместо создания нового
                 user_state.step = "post"
                 session.commit()
             else:
-                # Создаем новое состояние, если его нет
                 user_state = UserState(chat_id=chat_id, step="post")
                 session.add(user_state)
                 session.commit()
@@ -219,32 +192,27 @@ def set_meditation_time(message):
         meditation_time = datetime.strptime(time_str, "%H:%M")
         with Session() as session:
             user_state = session.query(UserState).filter_by(chat_id=chat_id).first()
+            user = session.query(User).filter_by(chat_id=chat_id).first()
+            
             if user_state:
-                user_state.meditation_time = meditation_time.strftime("%H:%M")
+                meditation_reminder = Reminder(user=user, meditation_time=meditation_time.strftime("%H:%M"))
                 user_state.step = "meditation_video"
+                session.add(meditation_reminder)
                 session.commit()
 
             with open(video_path, 'rb') as video:
                 video_message = bot.send_video(chat_id, video=video, caption="Ваше медитативное видео")
-                user_state.meditation_video_message_id = video_message.message_id
+                meditation_reminder.meditation_video_message_id = video_message.message_id
                 session.commit()
 
-            if TEST_MODE:
-                scheduler.add_job(
-                    send_meditation_video,
-                    trigger=IntervalTrigger(minutes=10),
-                    args=[chat_id],
-                    id=f"meditation_{chat_id}",
-                    replace_existing=True
-                )
-            else:
-                scheduler.add_job(
-                    send_meditation_video,
-                    trigger=CronTrigger(hour=meditation_time.hour, minute=meditation_time.minute),
-                    args=[chat_id],
-                    id=f"meditation_{chat_id}",
-                    replace_existing=True
-                )
+            scheduler.add_job(
+                send_meditation_video,
+                trigger=CronTrigger(hour=meditation_time.hour, minute=meditation_time.minute),
+                args=[chat_id],
+                id=f"meditation_{chat_id}",
+                replace_existing=True
+            )
+            
             bot.send_message(chat_id, f"Медитативное видео будет отправляться каждый день в {meditation_time.strftime('%H:%M')}.")
     except ValueError:
         bot.send_message(chat_id, "Пожалуйста, введите время в правильном формате (00:00 - 23:59).")
@@ -264,11 +232,10 @@ def state_handler(message):
             state = user_state.step
             if state == "name":
                 name = message.text
-                user = User(chat_id=str(chat_id), name=name, first_measurement_date=datetime.now())
+                user = User(chat_id=str(chat_id), name=name)
                 session.add(user)
                 session.commit()
 
-                schedule_user_reminder(user.id, chat_id, user.first_measurement_date)
                 bot.send_message(chat_id, f"Приятно познакомиться, {name}! Давайте начнем с вашего веса (в кг).")
                 user_state.step = "weight"
                 session.commit()
@@ -414,11 +381,25 @@ def save_measurement(chat_id, user_state, message):
 
 load_reminders()
 
-bot.polling(none_stop=True, timeout=60)
+scheduler.add_job(
+    send_group_reminder,
+    trigger=CronTrigger(day_of_week='mon', hour=7, minute=0),
+    id="weekly_group_reminder",
+    replace_existing=True
+)
+
+def bot_polling():
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+
+# Запуск polling в отдельном потоке
+polling_thread = threading.Thread(target=bot_polling, daemon=True)
+polling_thread.start()
 
 def shutdown_worker():
     message_queue.put(None)
     worker_thread.join()
 
 atexit.register(shutdown_worker)
+polling_thread.join()
+
 

@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, column_property
+from sqlalchemy.sql import select
 from datetime import datetime
 from api_token import DB_URL
 
@@ -19,7 +20,6 @@ class User(Base):
     chat_id = Column(Integer, unique=True, nullable=False)
     name = Column(String, nullable=False)
     measurements = relationship("Measurement", back_populates="user")
-    first_measurement_date = Column(DateTime, nullable=False, default=datetime.utcnow)  
 
 class Measurement(Base):
     __tablename__ = "measurements"
@@ -42,15 +42,18 @@ class Reminder(Base):
     __tablename__ = "reminders"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    day_of_week = Column(Integer, nullable=False)
-    time = Column(DateTime, nullable=False)
     user = relationship("User")
+    meditation_time = Column(String)
+    meditation_video_message_id = Column(Integer)
+
+    chat_id = column_property(
+        select(User.chat_id).where(User.id == user_id).scalar_subquery()
+    )
 
 class UserState(Base):
     __tablename__ = "user_states"
     chat_id = Column(Integer, primary_key=True)
     step = Column(String, nullable=True)
-    reminder_msg_id = Column(Integer)
     weight = Column(Float)
     left_arm = Column(Float)
     right_arm = Column(Float)
@@ -59,8 +62,7 @@ class UserState(Base):
     hips = Column(Float)
     left_leg = Column(Float)
     right_leg = Column(Float)
-    meditation_time = Column(String)
-    meditation_video_message_id = Column(Integer)
+
 
 if __name__ == "__main__":
     Base.metadata.create_all(engine)
